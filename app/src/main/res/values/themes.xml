@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.Menuboardcontroller" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Base platform theme; Compose (MenuboardcontrollerTheme) drives all real
+         theming. This just sets a matching window background so there is no
+         flash of the wrong color before Compose takes over. -->
+    <style name="Theme.Menuboardcontroller" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/cream_99</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+    </style>
 </resources>

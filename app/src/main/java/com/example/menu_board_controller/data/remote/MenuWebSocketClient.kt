@@ -2,103 +2,124 @@ package com.example.menu_board_controller.data.remote
 
 import android.util.Log
 import com.example.menu_board_controller.data.model.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.*
 import okhttp3.*
-import okio.ByteString
+import java.util.concurrent.TimeUnit
 
 class MenuWebSocketClient(private val url: String) {
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .pingInterval(20, TimeUnit.SECONDS)
+        .build()
+        
     private var webSocket: WebSocket? = null
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
-    private val _messages = MutableSharedFlow<WebSocketMessage<*>>(extraBufferCapacity = 10)
-    val messages: SharedFlow<WebSocketMessage<*>> = _messages
+    private val _messages = MutableSharedFlow<WebSocketMessage<List<Category>>>(extraBufferCapacity = 100)
+    val messages: SharedFlow<WebSocketMessage<List<Category>>> = _messages
 
-    private val json = Json { ignoreUnknownKeys = true }
+    @OptIn(ExperimentalSerializationApi::class)
+    private val json = Json { 
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = false // DO NOT send null fields, server might try to save them to NOT NULL columns
+        isLenient = true
+    }
 
     fun connect() {
+        if (webSocket != null) return
+        
+        Log.d("MenuWS", "Connecting to $url")
         val request = Request.Builder().url(url).build()
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d("WebSocket", "Connected")
+                Log.i("MenuWS", "CONNECTED")
                 getMenu()
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                Log.d("WebSocket", "Message received: $text")
+                Log.d("MenuWS", "RCV: $text")
                 try {
-                    val jsonElement = json.parseToJsonElement(text)
-                    val type = jsonElement.jsonObject["type"]?.toString()?.removeSurrounding("\"")
+                    val root = json.parseToJsonElement(text).jsonObject
+                    val type = root["type"]?.jsonPrimitive?.content ?: ""
                     
-                    when (type) {
-                        "menuData", "menuUpdated" -> {
-                            val payload = jsonElement.jsonObject["payload"]
-                            if (payload != null) {
-                                val menu = json.decodeFromJsonElement<List<Category>>(payload)
-                                _messages.tryEmit(WebSocketMessage(type, menu))
-                            }
+                    if (type == "menuData" || type == "menuUpdated") {
+                        val payload = root["payload"]
+                        if (payload != null && payload is JsonArray) {
+                            val menu = json.decodeFromJsonElement<List<Category>>(payload)
+                            _messages.tryEmit(WebSocketMessage(type, menu))
                         }
-                        "error" -> {
-                            val payload = jsonElement.jsonObject["payload"]
-                            Log.e("WebSocket", "Error from server: $payload")
-                        }
+                    } else if (type == "error") {
+                        Log.e("MenuWS", "SERVER ERROR: ${root["payload"]}")
+                    } else if (type.isNotEmpty() && type != "getMenu") {
+                        // For success responses like createdCategory, updatedProduct, etc.
+                        getMenu()
                     }
                 } catch (e: Exception) {
-                    Log.e("WebSocket", "Error parsing message", e)
+                    Log.e("MenuWS", "JSON PARSE FAIL: ${e.message}")
+                }
+            }
+
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e("MenuWS", "CONNECTION FAILED: ${t.message}")
+                this@MenuWebSocketClient.webSocket = null
+                scope.launch {
+                    delay(5000)
+                    connect()
                 }
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-                Log.d("WebSocket", "Closing: $code / $reason")
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e("WebSocket", "Failure: ${t.message}", t)
+                this@MenuWebSocketClient.webSocket = null
             }
         })
     }
 
     fun disconnect() {
-        webSocket?.close(1000, "User disconnected")
+        webSocket?.close(1000, "User disconnect")
+        webSocket = null
     }
 
-    private fun sendMessage(type: String, payload: Any? = null) {
-        val message = when (payload) {
-            is CreateCategoryPayload -> Json.encodeToString(WebSocketMessage(type, payload))
-            is UpdateCategoryPayload -> Json.encodeToString(WebSocketMessage(type, payload))
-            is CreateProductPayload -> Json.encodeToString(WebSocketMessage(type, payload))
-            is UpdateProductPayload -> Json.encodeToString(WebSocketMessage(type, payload))
-            is DeletePayload -> Json.encodeToString(WebSocketMessage(type, payload))
-            null -> "{\"type\":\"$type\"}"
-            else -> ""
-        }
-        if (message.isNotEmpty()) {
-            webSocket?.send(message)
+    private inline fun <reified T> sendMsg(type: String, payload: T? = null) {
+        try {
+            val message = if (payload == null) {
+                "{\"type\":\"$type\"}"
+            } else {
+                json.encodeToString(WebSocketMessage(type, payload))
+            }
+            Log.d("MenuWS", "SENDING: $message")
+            val sent = webSocket?.send(message) ?: false
+            if (!sent) {
+                Log.w("MenuWS", "Send failed. Socket may be closed.")
+            }
+        } catch (e: Exception) {
+            Log.e("MenuWS", "SERIALIZATION ERROR: ${e.message}")
         }
     }
 
-    fun getMenu() = sendMessage("getMenu")
+    fun getMenu() = sendMsg<String>("getMenu")
     
     fun createCategory(name: String, orderIndex: Int) = 
-        sendMessage("createCategory", CreateCategoryPayload(name, orderIndex))
+        sendMsg("createCategory", CreateCategoryPayload(name, orderIndex))
     
     fun updateCategory(id: String, name: String?, orderIndex: Int?, isVisible: Boolean?) =
-        sendMessage("updateCategory", UpdateCategoryPayload(id, name, orderIndex, isVisible))
+        sendMsg("updateCategory", UpdateCategoryPayload(id, name, orderIndex, isVisible))
     
     fun deleteCategory(id: String) = 
-        sendMessage("deleteCategory", DeletePayload(id))
+        sendMsg("deleteCategory", DeletePayload(id))
     
     fun createProduct(name: String, price: Double, categoryId: String) =
-        sendMessage("createProduct", CreateProductPayload(name, price, categoryId))
+        sendMsg("createProduct", CreateProductPayload(name, price, categoryId))
     
-    fun updateProduct(id: String, name: String?, price: Double?, isVisible: Boolean?) =
-        sendMessage("updateProduct", UpdateProductPayload(id, name, price, isVisible))
+    fun updateProduct(id: String, name: String?, price: Double?, isVisible: Boolean?, categoryId: String? = null) =
+        sendMsg("updateProduct", UpdateProductPayload(id, name, price, isVisible, categoryId))
     
     fun deleteProduct(id: String) = 
-        sendMessage("deleteProduct", DeletePayload(id))
+        sendMsg("deleteProduct", DeletePayload(id))
 }

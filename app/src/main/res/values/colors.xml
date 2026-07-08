@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
-    <color name="teal_200">#FF03DAC5</color>
-    <color name="teal_700">#FF018786</color>
+    <!-- Zicafé brand palette, mirrored from ui/theme/Color.kt for use in
+         classic Android views/XML (e.g. windowBackground). -->
+    <color name="coffee_brown_40">#6F4E37</color>
+    <color name="caramel_40">#8A6640</color>
+    <color name="espresso_40">#B2571E</color>
+    <color name="cream_99">#FFFBF7</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
 </resources>

@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class MenuViewModel : ViewModel() {
-    private val webSocketClient = MenuWebSocketClient("wss://menu-board-8brurgku2-0-projects.vercel.app")
+    private val webSocketClient = MenuWebSocketClient("wss://menu-board-api-murex.vercel.app")
     
     private val _menuData = MutableStateFlow<List<Category>>(emptyList())
     val menuData: StateFlow<List<Category>> = _menuData.asStateFlow()
@@ -31,7 +31,7 @@ class MenuViewModel : ViewModel() {
         webSocketClient.createCategory(name, orderIndex)
     }
 
-    fun updateCategory(id: String, name: String?, orderIndex: Int?, isVisible: Boolean?) {
+    fun updateCategory(id: String, name: String? = null, orderIndex: Int? = null, isVisible: Boolean? = null) {
         webSocketClient.updateCategory(id, name, orderIndex, isVisible)
     }
 
@@ -43,12 +43,17 @@ class MenuViewModel : ViewModel() {
         webSocketClient.createProduct(name, price, categoryId)
     }
 
-    fun updateProduct(id: String, name: String?, price: Double?, isVisible: Boolean?) {
-        webSocketClient.updateProduct(id, name, price, isVisible)
+    fun updateProduct(id: String, name: String? = null, price: Double? = null, isVisible: Boolean? = null, categoryId: String? = null) {
+        webSocketClient.updateProduct(id, name, price, isVisible, categoryId)
     }
 
     fun deleteProduct(id: String) {
         webSocketClient.deleteProduct(id)
+    }
+
+    fun reconnect() {
+        webSocketClient.disconnect()
+        webSocketClient.connect()
     }
 
     override fun onCleared() {
